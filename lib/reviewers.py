@@ -1,7 +1,7 @@
 import typing
 
 from lib.clients import BaseClient, YandexGPTClient, OpenAIClient
-from lib.parser import Cell, merge_task_into_single_string
+from lib.parser import NotebookCell, merge_task_into_single_string
 from lib.prompts import PROMPTS_GENERATOR
 
 
@@ -11,7 +11,7 @@ class StepByStepTaskReviewer:
 
     def review(
             self,
-            cells: typing.List[Cell],
+            cells: typing.List[NotebookCell],
             maximum_possible_score: typing.Optional[int] = None,
             prompt: typing.Optional[str] = None
     ) -> str:
@@ -37,7 +37,7 @@ class StepByStepTaskReviewer:
         for i in range(0, (len(cells) // 2) * 2, 2):
             question_cell, answer_cell = cells[i], cells[i + 1]
 
-            merged_cell = f"{question_cell.cell_text} \n {answer_cell.cell_text}"
+            merged_cell = f"{question_cell.raw_text} \n {answer_cell.raw_text}"
 
             context.append(
                 {
@@ -66,7 +66,7 @@ class FullTaskReviewer:
 
     def review(
             self,
-            cells: typing.List[Cell],
+            cells: typing.List[NotebookCell],
             maximum_possible_score: typing.Optional[int] = None,
             prompt: typing.Optional[str] = None
     ) -> str:

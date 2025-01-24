@@ -22,15 +22,15 @@ class BaseClient:
 
 
 class YandexGPTClient(BaseClient):
-    def __init__(self, service_account_id: str, key_id: str, private_key: str,
-                 model_url: str = "gpt://b1glbb4lnvrf7787ki53/yandexgpt/latest"):
+    def __init__(self, service_account_id: str, key_id: str, private_key: str, folder: str,
+                 model_url: str = "/yandexgpt/latest"):
         super().__init__(api_key=None)
 
         self.service_account_id = service_account_id
         self.key_id = key_id
         self.private_key = private_key
         self.token = self._generate_iam_token()
-        self.model_url = model_url
+        self.model_url = f"gpt://{folder}{model_url}"
 
     def _generate_iam_token(self) -> str:
         now = int(time.time())

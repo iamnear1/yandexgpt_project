@@ -6,7 +6,7 @@ from lib import parser
 
 class TestParser(unittest.TestCase):
     def test_parser_simple(self):
-        tasks, marks = parser.ParsingPipeline(
+        tasks, marks = parser.parsing_pipeline(
             "solved.ipynb", "original.ipynb", parser.MergeKind.BY_CHANGE, 1
         )
 
@@ -21,9 +21,9 @@ class TestParser(unittest.TestCase):
             cell = task[i]
 
             if i & 1 == 1:
-                self.assert_(lib.parser.SPECIAL_MARK in cell.cell_text)
+                self.assertTrue(lib.parser.SPECIAL_MARK in cell.raw_text)
 
-            self.assertEqual(cell.is_cell_changed, bool(i & 1))
+            self.assertEqual(cell.is_changed, bool(i & 1))
 
         # there is one tasks, which costs 10 points
         self.assertEqual(marks, [10])

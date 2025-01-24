@@ -3,3 +3,4 @@
  SERVICE_ACCOUNT_ID: "yandex-service-account-id"
  KEY_ID: "yandex-key-id"
  PRIVATE_KEY: "yandex-private-key"
+ YANDEX_FOLDER_ID: "yandex-project-folder-id"

@@ -1,155 +1,13 @@
 import dataclasses
 import enum
 import itertools
-import os
 import re
-import typing
+from pathlib import Path
+from typing import List, Tuple, Callable, Optional
 
 import nbformat
 
-SPECIAL_MARK = "[ИЗМЕНЕНО СТУДЕНТОМ]."
-
-
-@dataclasses.dataclass
-class Cell:
-    is_cell_changed: bool
-    cell_type: str
-    cell_text: str
-
-    def iter(self):
-        return iter((self.is_cell_changed, self.cell_type, self.cell_text))
-
-
-def get_notebooks_filenames_from_directory(path_dir: str) -> typing.List[str]:
-    out = []
-    for file in os.listdir(os.fsencode(path_dir)):
-        filename = os.fsdecode(file)
-        if filename.endswith(".ipynb"):
-            out.append(os.path.join(path_dir, filename))
-    return out
-
-
-def get_filtered_notebook_cells_from_notebook(file_path: str) -> typing.List[Cell]:
-    """
-    Pulls all cells out of the notebook, discarding any unnecessary ones (pictures/other attachments).
-    """
-    cells = []
-    with open(file_path, 'r', encoding='utf-8') as file:
-        notebook = nbformat.read(file, as_version=4)
-
-        for cell in notebook.cells:
-            if cell.cell_type == 'code':
-                cells.append(Cell(False, 'code', cell.source))
-
-            elif cell.cell_type == 'markdown':
-                if 'attachments' not in cell and 'base64' not in cell.source:
-                    cells.append(Cell(False, 'markdown', cell.source))
-
-    return cells
-
-
-def mark_modified_cells(orig_cells: typing.List[Cell],
-                        modified_cells: typing.List[Cell]) -> typing.List[Cell]:
-    """
-    Compares empty and done cells. Adds marks (Cell.is_changed=true) to the cells in the done work,
-    that the student has changed.
-    """
-
-    original_content = set(c.cell_text for c in orig_cells)
-
-    for cell_ in modified_cells:
-        # TODO: there are cases when only a line break was added (or some extra symbol),
-        #  and in this case you don't need to consider the cell changed either. handle this case
-
-        if cell_.cell_text not in original_content:
-            cell_.is_cell_changed = True
-
-    return modified_cells
-
-
-def parse_and_mark_cells_by_tasks(cells: typing.List[Cell], expected_task_count: int) \
-        -> typing.Tuple[typing.List[typing.List[Cell]], typing.List[int | None]]:
-    """
-    Takes a list of Cells as input. It splits it into tasks, i.e. the output is a list of length equal to the number of
-    tasks. Expected_task_count is set by the caller, if there are not so many tasks it throws an exception. Also
-    for each large task it looks for a mention of points (if there is one, otherwise None).
-    """
-
-    tasks = [[] for _ in range(expected_task_count)]
-    current_task_index = -1
-
-    scores: typing.List[int | None] = [None] * expected_task_count
-
-    for cell_ in cells:
-        match = re.search(pattern=r"##\s*([Зз])адача\s*(\d+)", string=cell_.cell_text)
-
-        if match:
-            task_number = int(match.group(2))
-
-            if 1 <= task_number <= expected_task_count:
-                current_task_index = task_number - 1
-                tasks[current_task_index].append(cell_)
-
-                score_match = re.search(pattern=r"(\d+)\s*([Бб]аллов)", string=cell_.cell_text)
-
-                if score_match:
-                    scores[current_task_index] = int(score_match.group(1))
-
-                continue
-            else:
-                raise RuntimeError(f"{task_number} > {expected_task_count}")
-
-        if current_task_index != -1:
-            tasks[current_task_index].append(cell_)
-
-    return tasks, scores
-
-
-def combine_modified_cells_by_type(tasks: typing.List[typing.List[Cell]]) -> typing.List[typing.List[Cell]]:
-    """
-    Group cells by (Cell.is_cell_changed, Cell.cell_type)
-    """
-    combined_tasks = []
-
-    for task in tasks:
-        combined_task = []
-        for key, group in itertools.groupby(task, key=lambda c: (c.is_cell_changed, c.cell_type)):
-            is_changed, cell_type = key
-            group_list = list(group)
-            combined_text = "\n".join(cell_.cell_text for cell_ in group_list)
-            if is_changed:
-                combined_task.append(Cell(is_changed, cell_type, f"{SPECIAL_MARK}\n" + combined_text))
-            else:
-                combined_task.append(Cell(is_changed, cell_type, combined_text))
-        combined_tasks.append(combined_task)
-
-    return combined_tasks
-
-
-def combine_modified_cells_v2(tasks: typing.List[typing.List[Cell]]) -> typing.List[typing.List[Cell]]:
-    """
-    Group cells by Cell.is_cell_changed
-    """
-    combined_tasks = []
-
-    for task in tasks:
-        combined_task = []
-
-        for key, group in itertools.groupby(task, key=lambda c: c.is_cell_changed):
-            is_changed = key
-            group_list = list(group)
-            combined_text = "\n".join(c.cell_text for c in group_list)
-            if is_changed:
-                combined_task.append(Cell(is_changed, "mixed", f"{SPECIAL_MARK}\n" + combined_text))
-            else:
-                combined_task.append(Cell(is_changed, "mixed", combined_text))
-        combined_tasks.append(combined_task)
-
-    return combined_tasks
-
-
-def merge_task_into_single_string(task: typing.List[Cell], delim: str = "\n\n\n") -> str:
-    return delim.join(map(lambda cell_: cell_.cell_text, task))
+from lib.constants import SPECIAL_MARK
 
 
 class MergeKind(enum.Enum):
@@ -157,23 +15,190 @@ class MergeKind(enum.Enum):
     BY_CHANGE_AND_CELL_TYPE = 2
 
 
-def ParsingPipeline(notebook_path: str, original_notebook_path: str, kind: MergeKind,
-                    tasks_count: int) -> typing.Tuple[typing.List[typing.List[Cell]], typing.List[int | None]]:
-    """takes as input the path to the student's work, the path to an empty paper, the MergeKind type and the number of assignments.
-    returns a list of assignments (each assignment is a list of Cell's) and a list of possible grades for the assignment,
-    if any are specified in the original task.
+class CellType(enum.Enum):
+    CODE = 1
+    MARKDOWN = 2
+
+    # Used for grouped cells of mixed types
+    OTHER = 3
+
+
+@dataclasses.dataclass
+class NotebookCell:
+    is_changed: bool
+    cell_type: CellType
+    raw_text: str
+
+
+def get_notebooks_filenames_from_directory(directory: str) -> List[str]:
+    path = Path(directory)
+    return [str(p) for p in path.glob("*.ipynb")]
+
+
+def normalize_text(text: str) -> str:
+    text = text.strip()
+    text = re.sub(r'\r\n', '\n', text)
+    text = re.sub(r'\n{3,}', '\n\n', text)
+    text = re.sub(r'[ \t]+', ' ', text)
+    return text
+
+
+def get_filtered_notebook_cells_from_notebook(file_path: str) -> List[NotebookCell]:
+    """
+    Extract code and markdown cells, filtering those with (attachments | base64 images).
+    """
+    cells = []
+    with open(file_path, 'r', encoding='utf-8') as file:
+        notebook = nbformat.read(file, as_version=4)
+
+        for cell in notebook.cells:
+            if cell.cell_type == 'code':
+                cells.append(NotebookCell(False, CellType.CODE, cell.source))
+            elif cell.cell_type == 'markdown':
+                has_attachments = 'attachments' in cell.get('metadata', {})
+                has_base64 = 'base64' in cell.source
+                if not has_attachments and not has_base64:
+                    cells.append(NotebookCell(False, CellType.MARKDOWN, cell.source))
+    return cells
+
+
+def mark_modified_cells(
+        orig_cells: List[NotebookCell],
+        modified_cells: List[NotebookCell]
+) -> List[NotebookCell]:
+    """
+    Mark cells as changed if their normalized content isn't in the original.
+    Creates new NotebookCell instances to avoid mutating inputs.
+    """
+    original_content = {normalize_text(c.raw_text) for c in orig_cells}
+    marked_cells = []
+    for cell in modified_cells:
+        normalized = normalize_text(cell.raw_text)
+        is_changed = normalized not in original_content
+        marked_cells.append(dataclasses.replace(cell, is_changed=is_changed))
+    return marked_cells
+
+
+def parse_and_mark_cells_by_tasks(
+        cells: List[NotebookCell],
+        expected_task_count: int
+) -> Tuple[List[List[NotebookCell]], List[Optional[int]]]:
+    """
+    Split cells into tasks based on headers. Returns tasks and scores.
+
+    Raises ValueError if task number exceeds expected count.
+    """
+    tasks = [[] for _ in range(expected_task_count)]
+    scores: List[Optional[int]] = [None] * expected_task_count
+    current_task_index = -1
+
+    for cell in cells:
+        header_match = re.search(
+            # todo: better pattern?
+            r"##\s*([Зз])адача\s*(\d+)",
+            cell.raw_text,
+            flags=re.IGNORECASE
+        )
+        if header_match:
+            task_number = int(header_match.group(2))
+            if not (1 <= task_number <= expected_task_count):
+                raise ValueError(
+                    f"Found task {task_number} but expected {expected_task_count} tasks"
+                )
+            current_task_index = task_number - 1
+            tasks[current_task_index].append(cell)
+
+            score_match = re.search(r"(\d+)\s*([Бб]аллов)", cell.raw_text)
+            if score_match:
+                scores[current_task_index] = int(score_match.group(1))
+            continue
+
+        if current_task_index != -1:
+            tasks[current_task_index].append(cell)
+
+    if len(tasks) != expected_task_count:
+        raise RuntimeError(
+            f"Parsed {len(tasks)} tasks but expected {expected_task_count}"
+        )
+    return tasks, scores
+
+
+def _combine_cells(
+        tasks: List[List[NotebookCell]],
+        key_func: Callable[[NotebookCell], tuple],
+        cell_type_func: Callable[[tuple], CellType]
+) -> List[List[NotebookCell]]:
+    """
+    Helper to group cells by key function and combine into single cells.
+    """
+    combined_tasks = []
+    for task in tasks:
+        combined = []
+        for key, group in itertools.groupby(task, key=key_func):
+            group_cells = list(group)
+            combined_text = "\n\n".join(c.raw_text for c in group_cells)
+            is_changed = group_cells[0].is_changed
+            if is_changed:
+                combined_text = f"{SPECIAL_MARK}\n{combined_text}"
+            combined.append(NotebookCell(
+                is_changed=is_changed,
+                cell_type=cell_type_func(key),
+                raw_text=combined_text
+            ))
+        combined_tasks.append(combined)
+    return combined_tasks
+
+
+def combine_modified_cells_by_type(
+        tasks: List[List[NotebookCell]]
+) -> List[List[NotebookCell]]:
+    """
+    Group cells by (is_changed, cell_type).
+    """
+    return _combine_cells(
+        tasks,
+        key_func=lambda c: (c.is_changed, c.cell_type),
+        cell_type_func=lambda key: key[1]
+    )
+
+
+def combine_modified_cells_by_change(
+        tasks: List[List[NotebookCell]]
+) -> List[List[NotebookCell]]:
+    """
+    Group cells by is_changed only, using CellType.OTHER for resulting cell
+    """
+    return _combine_cells(
+        tasks,
+        key_func=lambda c: c.is_changed,
+        cell_type_func=lambda _: CellType.OTHER
+    )
+
+
+def merge_task_into_single_string(task: List[NotebookCell], delim: str = "\n\n\n") -> str:
+    return delim.join(map(lambda cell_: cell_.raw_text, task))
+
+
+def parsing_pipeline(
+        notebook_path: str,
+        original_notebook_path: str,
+        kind: MergeKind,
+        tasks_count: int
+) -> Tuple[List[List[NotebookCell]], List[Optional[int]]]:
+    """
+    Main pipeline. Returns combined tasks and maximum scores.
     """
     orig_cells = get_filtered_notebook_cells_from_notebook(original_notebook_path)
     student_cells = get_filtered_notebook_cells_from_notebook(notebook_path)
     marked_cells = mark_modified_cells(orig_cells, student_cells)
 
-    cleaned_tasks, max_marks = parse_and_mark_cells_by_tasks(marked_cells, tasks_count)
+    tasks, max_marks = parse_and_mark_cells_by_tasks(marked_cells, tasks_count)
 
     if kind == MergeKind.BY_CHANGE_AND_CELL_TYPE:
-        combined_tasks = combine_modified_cells_by_type(cleaned_tasks)
+        combined_tasks = combine_modified_cells_by_type(tasks)
     elif kind == MergeKind.BY_CHANGE:
-        combined_tasks = combine_modified_cells_v2(cleaned_tasks)
+        combined_tasks = combine_modified_cells_by_change(tasks)
     else:
-        raise RuntimeError(f"{kind} is not a valid MergeKind. Unsupported for now")
+        raise ValueError(f"Unsupported MergeKind, FIX ME!: {kind}")
 
     return combined_tasks, max_marks
