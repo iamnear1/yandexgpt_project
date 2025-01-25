@@ -98,7 +98,6 @@ def parse_and_mark_cells_by_tasks(
 
     for cell in cells:
         header_match = re.search(
-            # todo: better pattern?
             r"##\s*([Зз])адача\s*(\d+)",
             cell.raw_text,
             flags=re.IGNORECASE
