@@ -11,7 +11,11 @@ from lib.constants import SPECIAL_MARK
 
 
 class MergeKind(enum.Enum):
+    # Merges consecutive cells into one if they are simultaneously changed by the student or simultaneously unchanged
     BY_CHANGE = 1
+
+    # Merges consecutive cells into one if they are simultaneously changed by the student or
+    # simultaneously unchanged and at the same time the cell type is the same (CellType)
     BY_CHANGE_AND_CELL_TYPE = 2
 
 

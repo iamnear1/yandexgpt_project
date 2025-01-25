@@ -22,8 +22,14 @@ class BaseClient:
 
 
 class YandexGPTClient(BaseClient):
-    def __init__(self, service_account_id: str, key_id: str, private_key: str, folder: str,
-                 model_url: str = "/yandexgpt/latest"):
+    def __init__(
+            self,
+            service_account_id: str,
+            key_id: str,
+            private_key: str,
+            folder: str,
+            model_url: str = "/yandexgpt/latest"
+    ) -> None:
         super().__init__(api_key=None)
 
         self.service_account_id = service_account_id

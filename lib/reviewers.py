@@ -61,8 +61,8 @@ class StepByStepTaskReviewer:
 
 
 class FullTaskReviewer:
-    def __init__(self, yandex_client) -> None:
-        self.client = yandex_client
+    def __init__(self, client: BaseClient) -> None:
+        self.client = client
 
     def review(
             self,
